@@ -11,21 +11,26 @@ import (
 )
 
 var (
-	iface  = flag.String("i", "eth0", "Interface to monitor")
-	bpf    = flag.String("b", "udp", "BPF capture filter")
-	window = flag.Duration("w", 10*time.Second, "Window size")
+	iface      = flag.String("i", "eth0", "Interface to monitor")
+	bpf        = flag.String("b", "udp", "BPF capture filter")
+	windowSize = flag.Duration("w", 10*time.Second, "Window size")
 )
 
-type entry struct {
+type window struct {
 	firstPacket time.Time       // When was the first packet seen?
 	lastPacket  time.Time       // When was the last packet seen?
 	intervals   []time.Duration // Time between packets
 }
 
-var cache map[string]*entry // Keyed by srcIP:srcPort
+var cache map[string]*window // Keyed by srcIP:srcPort
 
-// classifyInterval takes a slice of intervals and decides if they are normal
-func classifyInterval(key string, intervals []time.Duration) {
+// classify determines if a window is anomalous
+func (w *window) classify() {
+	// TODO
+}
+
+// graph generates a histogram for a window
+func (w *window) graph() {
 	// TODO
 }
 
@@ -74,16 +79,16 @@ func main() {
 
 		key := srcIP + ":" + srcPort.String()
 		if _, ok := cache[key]; !ok { // Haven't seen this key before
-			cache[key] = &entry{
+			cache[key] = &window{
 				firstPacket: packetArrived,
 				lastPacket:  packetArrived,
 			}
-		} else if time.Since(cache[key].firstPacket) >= *window { // Window expired
+		} else if time.Since(cache[key].firstPacket) >= *windowSize { // Window expired
 			// Classify anomalous behavior
-			classifyInterval(key, cache[key].intervals)
+			cache[key].classify()
 
 			// Reset to new window
-			cache[key] = &entry{
+			cache[key] = &window{
 				firstPacket: packetArrived,
 				lastPacket:  packetArrived,
 			}
