@@ -3,9 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
-	"github.com/bsipos/thist"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
@@ -13,37 +14,67 @@ import (
 )
 
 var (
-	iface      = flag.String("i", "eth0", "Interface to monitor")
-	bpf        = flag.String("b", "udp", "BPF capture filter")
-	windowSize = flag.Duration("w", 10*time.Second, "Window size")
+	iface            = flag.String("i", "eth0", "Interface to monitor")
+	bpf              = flag.String("b", "udp", "BPF capture filter")
+	mode             = flag.String("m", "train", "Mode to run in (train, ids)")
+	clean            = flag.Bool("c", false, "Train on clean traffic (else malicious traffic)")
+	trainingFilename = flag.String("t", "training.csv", "Training file")
+	treeFilename     = flag.String("f", "tree.txt", "Tree file")
+	verbose          = flag.Bool("v", false, "Verbose output")
 )
 
-type window struct {
-	firstPacket time.Time       // When was the first packet seen?
-	lastPacket  time.Time       // When was the last packet seen?
-	intervals   []time.Duration // Time between packets
-}
-
-var cache = map[string]*window{} // keyed by srcIP:srcPort
-
-// classify determines if a window is anomalous
-func (w *window) classify() {
-	// TODO
-}
-
-// graph generates a histogram for a window
-func (w *window) graph(name string) {
-	h := thist.NewHist(nil, name, "fixed", 10, true)
-
-	for _, interval := range w.intervals {
-		h.Update(float64(interval * time.Second))
-	}
-
-	fmt.Println(h.Draw())
-}
+var lastSeen = map[string]time.Time{} // keyed by packet hash
 
 func main() {
 	flag.Parse()
+	if *verbose {
+		log.SetLevel(log.DebugLevel)
+	}
+
+	var tree node
+	var trainingFile *os.File
+
+	if *mode == "train" {
+		log.Infof("Running in training mode with clean=%v", *clean)
+
+		// Check if training file exists
+		if _, err := os.Stat(*trainingFilename); os.IsNotExist(err) {
+			f, err := os.Create(*trainingFilename)
+			if err != nil {
+				log.Fatal(err)
+			}
+			_, err = f.WriteString(strings.Join(Header, ",") + "\n")
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+
+		var err error
+		trainingFile, err = os.OpenFile(*trainingFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Fatalf("open training file: %s", err)
+		}
+	} else if *mode == "ids" {
+		log.Info("Running in IDS mode")
+		data, header := readDataSet(*trainingFilename)
+		log.Infof("Training ID3 model on %d packets", len(data))
+
+		log.Debugf("Header: %v", header)
+		log.Debugf("Training data: %+v", data)
+		tree = id3(data, header)
+
+		// Print output
+		for _, field := range header {
+			log.Printf("%s gain: %f", field, gain(data, field))
+		}
+
+		// Write decision tree
+		if err := os.WriteFile(*treeFilename, []byte(tree.String()), 0644); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		log.Fatalf("Invalid mode %s", *mode)
+	}
 
 	handle, err := pcap.OpenLive(*iface, 262144, true, pcap.BlockForever)
 	if err != nil {
@@ -67,7 +98,7 @@ func main() {
 		udpLayer := udp.(*layers.UDP)
 		srcIP := pkt.NetworkLayer().NetworkFlow().Src().String()
 		srcPort := udpLayer.SrcPort
-		src := fmt.Sprintf("%s:%d", srcIP, srcPort)
+		src := fmt.Sprintf("%s:%d", srcIP, srcPort) // srcIP:srcPort
 
 		dns := pkt.Layer(layers.LayerTypeDNS)
 		if dns == nil {
@@ -81,31 +112,36 @@ func main() {
 			continue
 		}
 
-		qClass := dnsLayer.Questions[0].Class
-		if qClass != 1 {
-			log.Warnf("Received strange QCLASS %d", qClass)
+		// Set lastSeen if we haven't seen this packet before
+		if _, seen := lastSeen[src]; !seen {
+			lastSeen[src] = packetArrived
 		}
 
-		if _, ok := cache[src]; !ok { // Haven't seen this src before
-			log.Debugf("Tracking new window %s", src)
-			cache[src] = &window{
-				firstPacket: packetArrived,
-				lastPacket:  packetArrived,
-			}
-		} else if time.Since(cache[src].firstPacket) >= *windowSize { // Window expired
-			// Classify anomalous behavior
-			cache[src].classify()
-			cache[src].graph(src)
-
-			// Reset to new window
-			cache[src] = &window{
-				firstPacket: packetArrived,
-				lastPacket:  packetArrived,
-			}
-		} else { // Window in progress
-			log.Debugf("Adding to existing window %s", src)
-			cache[src].intervals = append(cache[src].intervals, packetArrived.Sub(cache[src].lastPacket))
-			cache[src].lastPacket = packetArrived
+		packet := &Packet{
+			IsMalicious:         !*clean,
+			TimeSinceLastPacket: packetArrived.Sub(lastSeen[src]).Round(100 * time.Millisecond),
+			SourcePort:          uint16(srcPort),
+			QClass:              uint16(dnsLayer.Questions[0].Class),
+			QType:               uint16(dnsLayer.Questions[0].Type),
+			QName:               string(dnsLayer.Questions[0].Name),
+			AA:                  dnsLayer.AA,
+			TC:                  dnsLayer.TC,
+			RD:                  dnsLayer.RD,
+			RA:                  dnsLayer.RA,
 		}
+
+		if *mode == "train" {
+			if _, err := trainingFile.WriteString(packet.CSV() + "\n"); err != nil {
+				log.Fatal(err)
+			}
+		} else if *mode == "ids" {
+			malicious := follow(packet.Map(), tree) == "true"
+			if malicious {
+				log.Warnf("Detected malicious packet from %s: %s", src, packet.JSON())
+			}
+		}
+
+		// Update last seen
+		lastSeen[src] = packetArrived
 	}
 }
