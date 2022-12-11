@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	iface            = flag.String("i", "eth0", "Interface to monitor")
+	iface            = flag.String("i", "ens18", "Interface to monitor")
 	bpf              = flag.String("b", "udp", "BPF capture filter")
 	mode             = flag.String("m", "train", "Mode to run in (train, ids)")
 	clean            = flag.Bool("c", false, "Train on clean traffic (else malicious traffic)")
@@ -106,19 +106,7 @@ func main() {
 			log.Debugf("Not DNS, skipping packet")
 			continue
 		}
-		log.Infof("DNS packet from %s: %+v", src, msg)
-
-		//dns := pkt.Layer(layers.LayerTypeDNS)
-		//if dns == nil {
-		//	log.Debugf("Not DNS, skipping packet: %+v", pkt.ApplicationLayer().LayerType().String())
-		//	continue
-		//}
-		//dnsLayer := dns.(*layers.DNS)
-
-		//if len(dnsLayer.Questions) == 0 {
-		//	log.Debugf("No DNS questions, skipping packet")
-		//	continue
-		//}
+		log.Debugf("DNS packet from %s: %+v", src, msg)
 
 		// Set lastSeen if we haven't seen this packet before
 		if _, seen := lastSeen[src]; !seen {

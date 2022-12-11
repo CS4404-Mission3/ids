@@ -8,7 +8,6 @@ import (
 	"math"
 	"math/rand"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -267,10 +266,7 @@ func (n *node) String() string {
 // printTree prints the tree
 func printTree(root node, indentation int) {
 	if root.children == nil { // leaf
-		printBuffer += fmt.Sprintf("%s%s\n",
-			indent(indentation),
-			strings.ReplaceAll(root.description, categoryName+"=", ""),
-		)
+		printBuffer += fmt.Sprintf("%s%s\n", indent(indentation), root.description)
 	} else {
 		printBuffer += fmt.Sprintf("%sswitch %s {\n", indent(indentation), root.name)
 	}
