@@ -10,6 +10,7 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -100,17 +101,24 @@ func main() {
 		srcPort := udpLayer.SrcPort
 		src := fmt.Sprintf("%s:%d", srcIP, srcPort) // srcIP:srcPort
 
-		dns := pkt.Layer(layers.LayerTypeDNS)
-		if dns == nil {
+		var msg dns.Msg
+		if err := msg.Unpack(udpLayer.Payload); err != nil {
 			log.Debugf("Not DNS, skipping packet")
 			continue
 		}
-		dnsLayer := dns.(*layers.DNS)
+		log.Infof("DNS packet from %s: %+v", src, msg)
 
-		if len(dnsLayer.Questions) == 0 {
-			log.Debugf("No DNS questions, skipping packet")
-			continue
-		}
+		//dns := pkt.Layer(layers.LayerTypeDNS)
+		//if dns == nil {
+		//	log.Debugf("Not DNS, skipping packet: %+v", pkt.ApplicationLayer().LayerType().String())
+		//	continue
+		//}
+		//dnsLayer := dns.(*layers.DNS)
+
+		//if len(dnsLayer.Questions) == 0 {
+		//	log.Debugf("No DNS questions, skipping packet")
+		//	continue
+		//}
 
 		// Set lastSeen if we haven't seen this packet before
 		if _, seen := lastSeen[src]; !seen {
@@ -121,13 +129,13 @@ func main() {
 			IsMalicious:         !*clean,
 			TimeSinceLastPacket: packetArrived.Sub(lastSeen[src]).Round(100 * time.Millisecond),
 			SourcePort:          uint16(srcPort),
-			QClass:              uint16(dnsLayer.Questions[0].Class),
-			QType:               uint16(dnsLayer.Questions[0].Type),
-			QName:               string(dnsLayer.Questions[0].Name),
-			AA:                  dnsLayer.AA,
-			TC:                  dnsLayer.TC,
-			RD:                  dnsLayer.RD,
-			RA:                  dnsLayer.RA,
+			QClass:              msg.Question[0].Qclass,
+			QType:               msg.Question[0].Qtype,
+			QName:               msg.Question[0].Name,
+			AA:                  msg.Authoritative,
+			TC:                  msg.Truncated,
+			RD:                  msg.RecursionDesired,
+			RA:                  msg.RecursionAvailable,
 		}
 
 		if *mode == "train" {
