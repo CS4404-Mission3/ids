@@ -113,17 +113,33 @@ func main() {
 			lastSeen[src] = packetArrived
 		}
 
-		packet := &Packet{
-			IsMalicious:         !*clean,
-			TimeSinceLastPacket: packetArrived.Sub(lastSeen[src]).Round(100 * time.Millisecond),
-			SourcePort:          uint16(srcPort),
-			QClass:              msg.Question[0].Qclass,
-			QType:               msg.Question[0].Qtype,
-			QName:               msg.Question[0].Name,
-			AA:                  msg.Authoritative,
-			TC:                  msg.Truncated,
-			RD:                  msg.RecursionDesired,
-			RA:                  msg.RecursionAvailable,
+		var packet *Packet
+		if len(msg.Question) < 1 { // No DNS question
+			packet = &Packet{
+				IsMalicious:         !*clean,
+				TimeSinceLastPacket: packetArrived.Sub(lastSeen[src]).Round(100 * time.Millisecond),
+				SourcePort:          uint16(srcPort),
+				QClass:              0,
+				QType:               0,
+				QName:               "",
+				AA:                  msg.Authoritative,
+				TC:                  msg.Truncated,
+				RD:                  msg.RecursionDesired,
+				RA:                  msg.RecursionAvailable,
+			}
+		} else {
+			packet = &Packet{
+				IsMalicious:         !*clean,
+				TimeSinceLastPacket: packetArrived.Sub(lastSeen[src]).Round(100 * time.Millisecond),
+				SourcePort:          uint16(srcPort),
+				QClass:              msg.Question[0].Qclass,
+				QType:               msg.Question[0].Qtype,
+				QName:               msg.Question[0].Name,
+				AA:                  msg.Authoritative,
+				TC:                  msg.Truncated,
+				RD:                  msg.RecursionDesired,
+				RA:                  msg.RecursionAvailable,
+			}
 		}
 
 		if *mode == "train" {
