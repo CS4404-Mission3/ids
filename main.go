@@ -15,13 +15,15 @@ import (
 )
 
 var (
-	iface            = flag.String("i", "ens18", "Interface to monitor")
-	bpf              = flag.String("b", "udp", "BPF capture filter")
-	mode             = flag.String("m", "train", "Mode to run in (train, ids)")
-	clean            = flag.Bool("c", false, "Train on clean traffic (else malicious traffic)")
-	trainingFilename = flag.String("t", "training.csv", "Training file")
-	treeFilename     = flag.String("f", "tree.txt", "Tree file")
-	verbose          = flag.Bool("v", false, "Verbose output")
+	iface        = flag.String("i", "ens18", "Interface to monitor")
+	bpf          = flag.String("b", "udp", "BPF capture filter")
+	train        = flag.Bool("t", false, "Run in training mode? Else IDS mode")
+	clean        = flag.Bool("c", false, "Train on clean traffic (else malicious traffic)")
+	verbose      = flag.Bool("v", false, "Verbose output")
+	exitAfterID3 = flag.Bool("e", false, "Exit after ID3 training")
+
+	trainingFilename = flag.String("training-file", "training.csv", "Training file")
+	treeFilename     = flag.String("tree-file", "tree.txt", "Tree file")
 )
 
 var lastSeen = map[string]time.Time{} // keyed by packet hash
@@ -35,7 +37,7 @@ func main() {
 	var tree node
 	var trainingFile *os.File
 
-	if *mode == "train" {
+	if *train {
 		log.Infof("Running in training mode with clean=%v", *clean)
 
 		// Check if training file exists
@@ -55,7 +57,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("open training file: %s", err)
 		}
-	} else if *mode == "ids" {
+	} else {
 		log.Info("Running in IDS mode")
 		data, header := readDataSet(*trainingFilename)
 		log.Infof("Training ID3 model on %d packets", len(data))
@@ -73,8 +75,11 @@ func main() {
 		if err := os.WriteFile(*treeFilename, []byte(tree.String()), 0644); err != nil {
 			log.Fatal(err)
 		}
-	} else {
-		log.Fatalf("Invalid mode %s", *mode)
+	}
+
+	if *exitAfterID3 {
+		log.Infof("-e flag set, exiting")
+		return
 	}
 
 	handle, err := pcap.OpenLive(*iface, 262144, true, pcap.BlockForever)
@@ -113,40 +118,30 @@ func main() {
 			lastSeen[src] = packetArrived
 		}
 
-		var packet *Packet
+		packet := &Packet{
+			IsMalicious:         !*clean,
+			TimeSinceLastPacket: packetArrived.Sub(lastSeen[src]).Round(100 * time.Millisecond),
+			SourcePort:          uint16(srcPort),
+			AA:                  msg.Authoritative,
+			TC:                  msg.Truncated,
+			RD:                  msg.RecursionDesired,
+			RA:                  msg.RecursionAvailable,
+		}
 		if len(msg.Question) < 1 { // No DNS question
-			packet = &Packet{
-				IsMalicious:         !*clean,
-				TimeSinceLastPacket: packetArrived.Sub(lastSeen[src]).Round(100 * time.Millisecond),
-				SourcePort:          uint16(srcPort),
-				QClass:              0,
-				QType:               0,
-				QName:               "",
-				AA:                  msg.Authoritative,
-				TC:                  msg.Truncated,
-				RD:                  msg.RecursionDesired,
-				RA:                  msg.RecursionAvailable,
-			}
+			packet.QClass = 0
+			packet.QType = 0
+			packet.QName = ""
 		} else {
-			packet = &Packet{
-				IsMalicious:         !*clean,
-				TimeSinceLastPacket: packetArrived.Sub(lastSeen[src]).Round(100 * time.Millisecond),
-				SourcePort:          uint16(srcPort),
-				QClass:              msg.Question[0].Qclass,
-				QType:               msg.Question[0].Qtype,
-				QName:               msg.Question[0].Name,
-				AA:                  msg.Authoritative,
-				TC:                  msg.Truncated,
-				RD:                  msg.RecursionDesired,
-				RA:                  msg.RecursionAvailable,
-			}
+			packet.QClass = msg.Question[0].Qclass
+			packet.QType = msg.Question[0].Qtype
+			packet.QName = msg.Question[0].Name
 		}
 
-		if *mode == "train" {
+		if *train {
 			if _, err := trainingFile.WriteString(packet.CSV() + "\n"); err != nil {
 				log.Fatal(err)
 			}
-		} else if *mode == "ids" {
+		} else { // IDS mode
 			malicious := follow(packet.Map(), tree) == "true"
 			if malicious {
 				log.Warnf("Detected malicious packet from %s: %s", src, packet.JSON())
