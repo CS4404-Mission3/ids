@@ -23,11 +23,13 @@ var (
 	exitAfterID3       = flag.Bool("e", false, "Exit after ID3 training")
 	id3Filter          = flag.String("f", "dns_sd__udp_local", "Query filter")
 	id3MinBranchLength = flag.Int("l", 0, "Minimum branch length")
+	stateFlushInterval = flag.Duration("s", 5*time.Second, "State flush interval")
+	maxStateSize       = flag.Int("m", 100000, "Maximum state size")
 
 	benchmark        = flag.Bool("bench", false, "Benchmark mode")
 	trainingFilename = flag.String("training-file", "training.csv", "Training file")
 	graphvizFilename = flag.String("graphviz-file", "graphviz.txt", "GraphViz tree file")
-	treeFilename     = flag.String("tree-file", "tree.txt", "Tree file")
+	treeFilename     = flag.String("graph-file", "graph.txt", "Graph file")
 )
 
 var lastSeen = map[string]time.Time{} // keyed by packet hash
@@ -88,11 +90,20 @@ func main() {
 		if err := os.WriteFile(*graphvizFilename, []byte(tree.GraphViz(*id3Filter, *id3MinBranchLength)), 0644); err != nil {
 			log.Fatal(err)
 		}
-	}
 
-	if *exitAfterID3 {
-		log.Infof("-e flag set, exiting")
-		return
+		if *exitAfterID3 {
+			log.Infof("-e flag set, exiting")
+			return
+		}
+
+		// Start state flush ticker
+		go func() {
+			ticker := time.NewTicker(*stateFlushInterval)
+			for range ticker.C {
+				log.Debugf("Flushing state")
+				lastSeen = map[string]time.Time{}
+			}
+		}()
 	}
 
 	handle, err := pcap.OpenLive(*iface, 262144, true, pcap.BlockForever)
@@ -159,6 +170,12 @@ func main() {
 			if malicious {
 				log.Warnf("Detected malicious packet from %s: %s", src, packet.JSON())
 			}
+		}
+
+		// Check if state table is too big
+		if len(lastSeen) > *maxStateSize {
+			log.Debugf("State table too big, flushing")
+			lastSeen = map[string]time.Time{}
 		}
 
 		// Update last seen

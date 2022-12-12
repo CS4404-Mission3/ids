@@ -359,8 +359,8 @@ func bench(filename string) {
 	sort.Slice(keys, func(i, j int) bool {
 		return gains[keys[i]] > gains[keys[j]]
 	})
-	fmt.Println("Entropy Gains:")
-	// Print entropy gain with left aligned equal whitespace between each field
+	fmt.Println("Information Gain:")
+	// Print gains with left aligned equal whitespace between each field
 	for _, k := range keys {
 		fmt.Printf("%.4f: %s\n", gains[k], k)
 	}
