@@ -162,6 +162,6 @@ func main() {
 		}
 
 		// Update last seen
-		lastSeen[packet.CSV()] = packetArrived
+		lastSeen[packet.Hash()] = packetArrived
 	}
 }
