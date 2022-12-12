@@ -162,6 +162,6 @@ func main() {
 		}
 
 		// Update last seen
-		lastSeen[src] = packetArrived
+		lastSeen[packet.CSV()] = packetArrived
 	}
 }
