@@ -15,14 +15,18 @@ import (
 )
 
 var (
-	iface        = flag.String("i", "ens18", "Interface to monitor")
-	bpf          = flag.String("b", "udp", "BPF capture filter")
-	train        = flag.Bool("t", false, "Run in training mode? Else IDS mode")
-	clean        = flag.Bool("c", false, "Train on clean traffic (else malicious traffic)")
-	verbose      = flag.Bool("v", false, "Verbose output")
-	exitAfterID3 = flag.Bool("e", false, "Exit after ID3 training")
+	iface              = flag.String("i", "ens18", "Interface to monitor")
+	bpf                = flag.String("b", "udp", "BPF capture filter")
+	train              = flag.Bool("t", false, "Run in training mode? Else IDS mode")
+	clean              = flag.Bool("c", false, "Train on clean traffic (else malicious traffic)")
+	verbose            = flag.Bool("v", false, "Verbose output")
+	exitAfterID3       = flag.Bool("e", false, "Exit after ID3 training")
+	id3Filter          = flag.String("f", "dns_sd__udp_local", "Query filter")
+	id3MinBranchLength = flag.Int("l", 0, "Minimum branch length")
 
+	benchmark        = flag.Bool("bench", false, "Benchmark mode")
 	trainingFilename = flag.String("training-file", "training.csv", "Training file")
+	graphvizFilename = flag.String("graphviz-file", "graphviz.txt", "GraphViz tree file")
 	treeFilename     = flag.String("tree-file", "tree.txt", "Tree file")
 )
 
@@ -32,6 +36,11 @@ func main() {
 	flag.Parse()
 	if *verbose {
 		log.SetLevel(log.DebugLevel)
+	}
+
+	if *benchmark {
+		bench(*trainingFilename)
+		return
 	}
 
 	var tree node
@@ -73,6 +82,10 @@ func main() {
 
 		// Write decision tree
 		if err := os.WriteFile(*treeFilename, []byte(tree.String()), 0644); err != nil {
+			log.Fatal(err)
+		}
+		// Write decision tree
+		if err := os.WriteFile(*graphvizFilename, []byte(tree.GraphViz(*id3Filter, *id3MinBranchLength)), 0644); err != nil {
 			log.Fatal(err)
 		}
 	}

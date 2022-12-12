@@ -8,6 +8,8 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -23,14 +25,8 @@ type node struct {
 	children    map[string]node // attribute value to child node
 }
 
+// readDataSet parses a CSV file and returns a slice of maps, where each map is an entry and a list of header attributes
 func readDataSet(filename string) ([]map[string]string, []string) {
-
-	/* readDataSet
-	 * Description: Read data from text file randomly into slices of Entry objects.
-	 * filename: string Path to text file for reading
-	 * returns: 2 []map[string]string objects containing random values from filename and the header
-	 */
-
 	var all []map[string]string
 	var header []string
 
@@ -203,8 +199,8 @@ func id3(entries []map[string]string, attributes []string) node {
 	if ok, group := sameCategory(entries); ok {
 		return node{
 			name:        group,
-			description: categoryName + "=" + group,
-			children:    nil, // leaf
+			description: group, // categoryName + "=" + group,
+			children:    nil,   // leaf
 		}
 	}
 
@@ -259,28 +255,56 @@ func indent(n int) string {
 // String returns a string representation of the decision tree
 func (n *node) String() string {
 	printBuffer = ""
-	printTree(*n, 0)
+	printTreeText(*n, 0)
 	return printBuffer
 }
 
-// printTree prints the tree
-func printTree(root node, indentation int) {
+// GraphViz returns a string representation of the decision tree
+func (n *node) GraphViz(filter string, minBranchLen int) string {
+	printBuffer = "digraph {\n"
+	printTreeGraphViz(*n, "", filter, minBranchLen)
+	return printBuffer + "}\n"
+}
+
+func sanitize(s string) string {
+	for _, replacement := range []string{".", "(", ")", "-", "_"} {
+		s = strings.ReplaceAll(s, replacement, "_")
+	}
+	return s
+}
+
+// printTreeGraphViz prints the tree in GraphViz DOT format with
+func printTreeGraphViz(root node, parent, filter string, minBranchLength int) {
+	if root.children == nil { // leaf
+		l := fmt.Sprintf("  %s -> %s", parent, sanitize(root.description))
+		branchLen := strings.Count(l, "->")
+		if root.description != "" && (strings.Contains(parent, filter) || filter == "") && (branchLen >= minBranchLength) {
+			printBuffer += fmt.Sprintf("%s // Branch length %d\n", l, branchLen)
+		}
+	}
+
+	for childValue, child := range root.children {
+		if childValue != "" {
+			ns := fmt.Sprintf("%s -> \"%s\"", sanitize(root.name), sanitize(childValue))
+			if parent != "" {
+				ns = parent + " -> " + ns
+			}
+			printTreeGraphViz(child, ns, filter, minBranchLength)
+		}
+	}
+}
+
+// printTreeText prints the tree as a text tree
+func printTreeText(root node, indentation int) {
 	if root.children == nil { // leaf
 		printBuffer += fmt.Sprintf("%s%s\n", indent(indentation), root.description)
 	} else {
-		printBuffer += fmt.Sprintf("%sswitch %s {\n", indent(indentation), root.name)
+		printBuffer += fmt.Sprintf("%sswitch %s:\n", indent(indentation), root.name)
 	}
 
-	iterations := 0
 	for index, child := range root.children {
-		printBuffer += fmt.Sprintf("%scase %s {\n", indent(indentation+1), index)
-		printTree(child, indentation+2)
-		printBuffer += fmt.Sprintf("%s}\n", indent(indentation+1))
-		iterations++
-	}
-
-	if root.children != nil {
-		printBuffer += fmt.Sprintf(indent(indentation) + "}")
+		printBuffer += fmt.Sprintf("%scase %s:\n", indent(indentation+1), index)
+		printTreeText(child, indentation+2)
 	}
 }
 
@@ -307,40 +331,39 @@ func accuracy(tree node, testing []map[string]string) float64 {
 	return correct / float64(len(testing)) * 100
 }
 
-func test() {
-	filename := "data.txt"
-	trainingPercent := 0.50
-
+func bench(filename string) {
 	// Parse data
 	all, header := readDataSet(filename)
 
-	fmt.Println(header)
-	for a, b := range all {
-		fmt.Println(a, b)
-	}
+	// Scramble the set
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(all), func(i, j int) { all[i], all[j] = all[j], all[i] })
+	splitPoint := int(float64(len(all)) * 0.5)
+	training, testing := all[:splitPoint], all[splitPoint:]
 
-	// Generate decision tree
-	var tree node
-	var acc float64
-	var testing, training []map[string]string
-	for {
-		// Scramble the set
-		rand.Seed(time.Now().UnixNano())
-		rand.Shuffle(len(all), func(i, j int) { all[i], all[j] = all[j], all[i] })
-		splitPoint := int(trainingPercent * float64(len(all)))
-		training, testing = all[:splitPoint], all[splitPoint:]
+	fmt.Printf("Training on %d/%d packets\n", len(training), len(all))
+	tree := id3(training, header)
+	acc := accuracy(tree, testing)
+	fmt.Printf("%.2f%% model accuracy\n", acc)
 
-		tree = id3(training, header)
-		acc = accuracy(tree, testing)
-		if acc > 90 {
-			break
-		}
-	}
-
-	// Print output
-	log.Printf("%.2f%% testing accuracy", acc)
+	gains := map[string]float64{}
 	for _, field := range header {
-		log.Printf("%s gain: %f", field, gain(training, field))
+		gains[field] = gain(training, field)
 	}
-	log.Println(tree.String())
+
+	// Sort gains map by value
+	var keys []string
+	for k := range gains {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return gains[keys[i]] > gains[keys[j]]
+	})
+	fmt.Println("Entropy Gains:")
+	// Print entropy gain with left aligned equal whitespace between each field
+	for _, k := range keys {
+		fmt.Printf("%.4f: %s\n", gains[k], k)
+	}
+
+	//log.Println(tree.String())
 }
